@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm, trange
 
-from evaluate_v2 import eval_during_train
+#from evaluate_v2 import eval_during_train
 
 from transformers import (
     WEIGHTS_NAME,
@@ -53,7 +53,7 @@ from transformers import (
     XLNetTokenizer,
     get_linear_schedule_with_warmup
 )
-#from modeling_bert import BertForQuestionAnswering_v2
+from modeling_bert import BertForQuestionAnswering_v2
 
 
 from transformers import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP
@@ -88,7 +88,7 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 # log를 파일에 출력
-file_handler = logging.FileHandler('logs/train_log_230427_freeze.log')
+file_handler = logging.FileHandler('logs/train_log_340428.log')
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
