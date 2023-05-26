@@ -37,7 +37,7 @@ from transformers import (
     AlbertForQuestionAnswering,
     AlbertTokenizer,
     BertConfig,
-    BertForQuestionAnswering
+    BertForQuestionAnswering,
     BertTokenizer,
     DistilBertConfig,
     DistilBertForQuestionAnswering,
@@ -51,9 +51,12 @@ from transformers import (
     XLNetConfig,
     XLNetForQuestionAnswering,
     XLNetTokenizer,
-    get_linear_schedule_with_warmup
+    get_linear_schedule_with_warmup,
+    XLMRobertaConfig,
+    XLMRobertaTokenizer,
 )
-from modeling_bert import BertForQuestionAnswering_v2
+from modeling_xlm_roberta_v2 import XLMRobertaForQuestionAnswering_v2, XLMRobertaForQuestionAnswering_v3
+#from modeling_bert import BertForQuestionAnswering_v2
 
 
 from transformers import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP
@@ -66,11 +69,12 @@ from transformers import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP
 from squad_metrics import (
     compute_predictions_log_probs,
     compute_predictions_logits,
+    compute_predictions_logits_v2,
     squad_evaluate, squad_evaluate_v2,
 )
 
 #from transformers.data.processors.squad import SquadResult, SquadV1Processor, SquadV2Processor
-from squad import (SquadResult, SquadV1Processor, SquadV2Processor, 
+from squad import (SquadResult, HasResult, SquadV1Processor, SquadV2Processor, 
     squad_convert_examples_to_features_v2)
 
 from tokenization_kobert import KoBertTokenizer
@@ -88,14 +92,17 @@ stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 # log를 파일에 출력
-file_handler = logging.FileHandler('logs/train_log_340428.log')
+log_dir = "../logs/"
+if not os.path.exists(log_dir):
+    os.mkdir(log_dir)
+file_handler = logging.FileHandler(os.path.join(log_dir, 'train_log_230517.log'))
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
-ALL_MODELS = sum(
-    (tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, DistilBertConfig, RobertaConfig, XLNetConfig, XLMConfig)),
-    (),
-)
+#ALL_MODELS = sum(
+#    (tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, DistilBertConfig, RobertaConfig, XLNetConfig, XLMConfig)),
+#    (),
+#)
 MODEL_CLASSES = {
     "bert": (BertConfig, BertForQuestionAnswering, BertTokenizer),
     "roberta": (RobertaConfig, RobertaForQuestionAnswering, RobertaTokenizer),
@@ -103,8 +110,11 @@ MODEL_CLASSES = {
     "xlm": (XLMConfig, XLMForQuestionAnswering, XLMTokenizer),
     "distilbert": (DistilBertConfig, DistilBertForQuestionAnswering, DistilBertTokenizer),
     "albert": (AlbertConfig, AlbertForQuestionAnswering, AlbertTokenizer),
-    "kobert": (BertConfig, BertForQuestionAnswering_v2, KoBertTokenizer),
+    #"kobert": (BertConfig, BertForQuestionAnswering_v2, KoBertTokenizer),
+    "kobert": (BertConfig, BertForQuestionAnswering, KoBertTokenizer),
     "distilkobert": (DistilBertConfig, DistilBertForQuestionAnswering, KoBertTokenizer),
+    "xlm-roberta" : (XLMRobertaConfig, XLMRobertaForQuestionAnswering_v2, XLMRobertaTokenizer),
+    "xlm-roberta-v2" : (XLMRobertaConfig, XLMRobertaForQuestionAnswering_v3, XLMRobertaTokenizer),
 }
 
 
@@ -237,7 +247,7 @@ def train(args, train_dataset, model, tokenizer):
                 "is_impossibles": batch[7],
             }
 
-            if args.model_type in ["xlm", "roberta", "distilbert", "distilkobert"]:
+            if args.model_type in ["xlm", "roberta", "distilbert", "distilkobert"]:  ## xlm-roberta..
                 del inputs["token_type_ids"]
 
             if args.model_type in ["xlnet", "xlm"]:
@@ -414,8 +424,15 @@ def evaluate(args, model, tokenizer, prefix=""):
                 )
 
             else:
-                start_logits, end_logits, has_logits = output
-                result = SquadResult(unique_id, start_logits, end_logits)
+                if args.model_type in ["kobert", "xlm-roberta"]:
+                    start_logits, end_logits, has_logits = output
+                    result = SquadResult(unique_id, start_logits, end_logits)
+                elif args.model_type == "xlm-roberta-v2":
+                    start_logits, end_logits, has_logits = output
+                    result = HasResult(unique_id, start_logits, end_logits, has_logits)
+                else:
+                    start_logits, end_logits = output
+                    result = SquadResult(unique_id, start_logits, end_logits)
 
             all_results.append(result)
     evalTime = timeit.default_timer() - start_time
@@ -449,6 +466,22 @@ def evaluate(args, model, tokenizer, prefix=""):
             args.version_2_with_negative,
             tokenizer,
             args.verbose_logging,
+        )
+    elif args.model_type in ["xlm-roberta-v2"]:
+        predictions = compute_predictions_logits_v2(
+            examples,
+            features,
+            all_results,
+            args.n_best_size,
+            args.max_answer_length,
+            args.do_lower_case,
+            output_prediction_file,
+            output_nbest_file,
+            output_null_log_odds_file,
+            args.verbose_logging,
+            args.version_2_with_negative,
+            args.null_score_diff_threshold,
+            tokenizer,
         )
     else:
         predictions = compute_predictions_logits(
@@ -561,7 +594,7 @@ def main():
         default=None,
         type=str,
         required=True,
-        help="Path to pre-trained model or shortcut name selected in the list: " + ", ".join(ALL_MODELS),
+        help="Path to pre-trained model or shortcut name selected in the list: " #+ ", ".join(ALL_MODELS),
     )
     parser.add_argument(
         "--output_dir",
@@ -766,8 +799,10 @@ def main():
         ptvsd.enable_attach(address=(args.server_ip, args.server_port), redirect_output=True)
         ptvsd.wait_for_attach()
 
-    # Setup CUDA, GPU & distributed training
+    # Setup CUDA, GPU & distributed training # 1번 GPU 설정
     if args.local_rank == -1 or args.no_cuda:
+        os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"  # Arrange GPU devices starting from 0
+        os.environ["CUDA_VISIBLE_DEVICES"]= "1"
         device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
         args.n_gpu = 1 #torch.cuda.device_count()
     else:  # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
@@ -820,13 +855,22 @@ def main():
     )
     # Freezing the encoder
     if args.freeze_base_model:
-        for param in model.bert.parameters():
-            param.requires_grad = False
-        tmp_step = 0
-        while tmp_step < args.freeze_step:
-            for param in model.bert.encoder.layer[11-tmp_step].parameters():
-                param.requires_grad=True
-            tmp_step += 1
+        if args.model_type=="kobert":
+            for param in model.bert.parameters():
+                param.requires_grad = False
+            tmp_step = 0
+            while tmp_step < args.freeze_step:
+                for param in model.bert.encoder.layer[11-tmp_step].parameters():
+                    param.requires_grad=True
+                tmp_step += 1
+        elif args.model_type=="xlm-roberta":
+            for param in model.roberta.parameters():
+                param.requires_grad = False
+            tmp_step = 0
+            while tmp_step < args.freeze_step:
+                for param in model.roberta.encoder.layer[11-tmp_step].parameters():
+                    param.requires_grad=True
+                tmp_step += 1
 
     if args.local_rank == 0:
         # Make sure only the first process in distributed training will download model & vocab
